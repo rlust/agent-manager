@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { AreaChart, Area, Tooltip, ResponsiveContainer } from 'recharts'
+import { AreaChart, Area, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis } from 'recharts'
 import './index.css'
 
 const initialAgents = [
@@ -8,10 +8,13 @@ const initialAgents = [
   { id: 3, name: 'Auto-Trading Module', status: 'Online', lastActive: 'Now', type: 'Action', nodes: 8, origin: 'Manual' },
 ]
 
+const COLORS = ['#10b981', '#ef4444', '#f59e0b']
+
 function App() {
   // Navigation & UI state
   const [activeView, setActiveView] = useState('Dashboard')
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [selectedAgent, setSelectedAgent] = useState(null)
   const [toasts, setToasts] = useState([])
   const [searchQuery, setSearchQuery] = useState('')
   const [isDragging, setIsDragging] = useState(false)
@@ -40,6 +43,7 @@ function App() {
 
   const [stats, setStats] = useState({ cpu: 12, mem: 45, uptime: '12h 4m' })
   const [chartData, setChartData] = useState([])
+  const [executionHistory, setExecutionHistory] = useState({})
 
   // Persistence
   useEffect(() => localStorage.setItem('agents', JSON.stringify(agents)), [agents])
@@ -83,17 +87,15 @@ function App() {
       })
 
       setN8nStatus('Connected')
-      addLog('n8n workflows synchronized successfully.')
     } catch (err) {
       setN8nStatus('Error')
       addLog(`n8n Sync Error: ${err.message}`)
-      addToast('n8n Connection Failed', 'error')
     }
   }, [n8nConfig])
 
   useEffect(() => {
     syncN8n()
-    const int = setInterval(syncN8n, 30000) // Sync every 30s
+    const int = setInterval(syncN8n, 30000)
     return () => clearInterval(int)
   }, [syncN8n])
 
@@ -129,6 +131,26 @@ function App() {
     }))
   }
 
+  // Mock Execution History Generator
+  const getAgentHistory = (agentId) => {
+    if (executionHistory[agentId]) return executionHistory[agentId]
+
+    const mockHistory = Array.from({ length: 10 }).map((_, i) => ({
+      id: i,
+      timestamp: new Date(Date.now() - i * 3600000).toLocaleTimeString(),
+      status: Math.random() > 0.1 ? 'Success' : 'Failed',
+      duration: (Math.random() * 5 + 1).toFixed(2) + 's'
+    }))
+
+    setExecutionHistory(prev => ({ ...prev, [agentId]: mockHistory }))
+    return mockHistory
+  }
+
+  const calculateHealth = (history) => {
+    const successes = history.filter(h => h.status === 'Success').length
+    return (successes / history.length) * 100
+  }
+
   // Mock Stats
   useEffect(() => {
     const interval = setInterval(() => {
@@ -139,6 +161,91 @@ function App() {
     }, 4000)
     return () => clearInterval(interval)
   }, [])
+
+  const DrillDownView = () => {
+    if (!selectedAgent) return null
+    const history = getAgentHistory(selectedAgent.id)
+    const health = calculateHealth(history)
+    const pieData = [
+      { name: 'Success', value: history.filter(h => h.status === 'Success').length },
+      { name: 'Failed', value: history.filter(h => h.status === 'Failed').length }
+    ]
+
+    return (
+      <div className="drilldown-overlay" onClick={() => setSelectedAgent(null)}>
+        <div className="drilldown-modal card fade-in" onClick={e => e.stopPropagation()}>
+          <div className="drilldown-header">
+            <div>
+              <span className="agent-type">{selectedAgent.type}</span>
+              <h2>{selectedAgent.name}</h2>
+            </div>
+            <button className="btn-close" onClick={() => setSelectedAgent(null)}>✕</button>
+          </div>
+
+          <div className="drilldown-grid">
+            <div className="drilldown-main">
+              <div className="stats-row">
+                <div className="stat-box">
+                  <label>Health Score</label>
+                  <div className="value" style={{ color: health > 80 ? 'var(--status-online)' : 'var(--status-offline)' }}>{health}%</div>
+                </div>
+                <div className="stat-box">
+                  <label>Status</label>
+                  <div className={`value ${selectedAgent.status === 'Online' ? 'online' : 'offline'}`}>{selectedAgent.status}</div>
+                </div>
+                <div className="stat-box">
+                  <label>Nodes</label>
+                  <div className="value">{selectedAgent.nodes}</div>
+                </div>
+              </div>
+
+              <div className="chart-container">
+                <h3>Execution Success Rate</h3>
+                <div style={{ width: '100%', height: 200 }}>
+                  <ResponsiveContainer>
+                    <PieChart>
+                      <Pie data={pieData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                        {pieData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index]} />)}
+                      </Pie>
+                      <Tooltip contentStyle={{ background: '#121217', borderColor: 'var(--glass-border)', borderRadius: '8px' }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="history-section">
+                <h3>Execution History</h3>
+                <div className="history-list">
+                  {history.map(h => (
+                    <div key={h.id} className="history-item">
+                      <span className="time">{h.timestamp}</span>
+                      <span className={`status ${h.status.toLowerCase()}`}>{h.status}</span>
+                      <span className="duration">{h.duration}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="drilldown-sidebar">
+              <h3>Agent Config</h3>
+              <div className="config-item">
+                <label>Origin</label>
+                <span>{selectedAgent.origin}</span>
+              </div>
+              <div className="config-item">
+                <label>Last Sync</label>
+                <span>{selectedAgent.lastActive}</span>
+              </div>
+              <button className={`btn ${selectedAgent.status === 'Online' ? 'btn-danger' : 'btn-success'}`} onClick={() => toggleAgent(selectedAgent.id)}>
+                {selectedAgent.status === 'Online' ? 'Stop Agent' : 'Start Agent'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   const DashboardView = () => (
     <>
@@ -184,7 +291,7 @@ function App() {
 
       <section className="agent-grid">
         {agents.map((agent) => (
-          <div key={agent.id} className="card agent-card fade-in">
+          <div key={agent.id} className="card agent-card fade-in" onClick={() => setSelectedAgent(agent)}>
             <div className="card-header">
               <span className="agent-type">{agent.type}</span>
               <div className={`status-badge ${agent.status === 'Online' ? 'status-online' : 'status-offline'}`}>
@@ -196,8 +303,8 @@ function App() {
               <span>{agent.nodes} Nodes</span> <span className="dot" /> <span>{agent.lastActive}</span>
             </div>
             <div className="card-actions">
-              <button className="btn-icon">Logs</button>
-              <button className={`btn-action ${agent.status === 'Online' ? 'stop' : 'start'}`} onClick={() => toggleAgent(agent.id)}>
+              <button className="btn-icon" onClick={(e) => { e.stopPropagation(); setSelectedAgent(agent) }}>Stats</button>
+              <button className={`btn-action ${agent.status === 'Online' ? 'stop' : 'start'}`} onClick={(e) => { e.stopPropagation(); toggleAgent(agent.id) }}>
                 {agent.status === 'Online' ? 'Stop' : 'Start'}
               </button>
             </div>
@@ -219,12 +326,12 @@ function App() {
             </thead>
             <tbody>
               {list.map(a => (
-                <tr key={a.id}>
+                <tr key={a.id} onClick={() => setSelectedAgent(a)} style={{ cursor: 'pointer' }}>
                   <td>{a.name}</td>
                   <td><span className={`status-text ${a.status.toLowerCase()}`}>{a.status}</span></td>
                   <td>{a.origin}</td>
                   <td>{a.nodes}</td>
-                  <td><button className="btn-text" onClick={() => toggleAgent(a.id)}>Toggle</button></td>
+                  <td><button className="btn-text" onClick={(e) => { e.stopPropagation(); toggleAgent(a.id) }}>Toggle</button></td>
                 </tr>
               ))}
             </tbody>
@@ -246,7 +353,7 @@ function App() {
           <label>n8n Host URL</label>
           <input type="text" value={n8nConfig.url} onChange={e => setN8nConfig(p => ({ ...p, url: e.target.value }))} />
         </div>
-        <button className="btn btn-primary" onClick={syncN8n}>Test Connection & Sync</button>
+        <button className="btn btn-primary" onClick={syncN8n}>Sync n8n Instance</button>
       </div>
     </div>
   )
@@ -308,6 +415,8 @@ function App() {
           </div>
         </div>
       )}
+
+      {selectedAgent && DrillDownView()}
     </div>
   )
 }
