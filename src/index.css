@@ -115,6 +115,36 @@ body {
   transition: width 0.5s ease;
 }
 
+.n8n-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.3rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  margin-top: 0.5rem;
+  width: fit-content;
+}
+
+.n8n-badge .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.n8n-badge .status-dot.online {
+  background: var(--status-online);
+  box-shadow: 0 0 10px var(--status-online);
+}
+
+.n8n-badge .status-dot.error {
+  background: var(--status-offline);
+}
+
 /* Main Content */
 .main-content {
   padding: 3rem;
