@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { AreaChart, Area, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis } from 'recharts'
+import { AreaChart, Area, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import './index.css'
 
 const initialAgents = [
-  { id: 1, name: 'Stock Telegram Bot v3', status: 'Online', lastActive: '2 mins ago', type: 'Workflow', nodes: 12, origin: 'JSON' },
+  { id: 1, name: 'Stock Telegram Bot v3', status: 'Online', lastActive: '2 mins ago', type: 'Workflow', nodes: 12, origin: 'JSON', webhookPath: 'stock-update' },
   { id: 2, name: 'Market Sentiment Analyzer', status: 'Offline', lastActive: '1 hour ago', type: 'Agent', nodes: 5, origin: 'Manual' },
   { id: 3, name: 'Auto-Trading Module', status: 'Online', lastActive: 'Now', type: 'Action', nodes: 8, origin: 'Manual' },
 ]
@@ -41,9 +41,11 @@ function App() {
     return saved ? JSON.parse(saved) : [{ id: 1, timestamp: new Date().toLocaleTimeString(), message: 'System initialized.' }]
   })
 
+  // Execution & Results State
+  const [executionResults, setExecutionResults] = useState({})
+  const [isRunning, setIsRunning] = useState(false)
   const [stats, setStats] = useState({ cpu: 12, mem: 45, uptime: '12h 4m' })
   const [chartData, setChartData] = useState([])
-  const [executionHistory, setExecutionHistory] = useState({})
 
   // Persistence
   useEffect(() => localStorage.setItem('agents', JSON.stringify(agents)), [agents])
@@ -78,11 +80,13 @@ function App() {
         type: 'n8n Workflow',
         nodes: wf.nodes?.length || 0,
         origin: 'n8n',
-        rawId: wf.id
+        rawId: wf.id,
+        webhookPath: wf.nodes?.find(n => n.type === 'n8n-nodes-base.webhook')?.parameters?.path
       }))
 
       setAgents(prev => {
         const nonN8n = prev.filter(a => a.origin !== 'n8n')
+        const manual = prev.filter(a => a.origin === 'Manual')
         return [...nonN8n, ...n8nAgents]
       })
 
@@ -95,29 +99,76 @@ function App() {
 
   useEffect(() => {
     syncN8n()
-    const int = setInterval(syncN8n, 30000)
+    const int = setInterval(syncN8n, 60000)
     return () => clearInterval(int)
   }, [syncN8n])
 
-  const toggleN8nWorkflow = async (agent) => {
-    const action = agent.status === 'Online' ? 'deactivate' : 'activate'
+  const fetchLatestExecution = async (agent) => {
+    if (agent.origin !== 'n8n') return
     try {
-      const resp = await fetch(`/n8n-api/workflows/${agent.rawId}/${action}`, {
-        method: 'POST',
+      const resp = await fetch(`/n8n-api/executions?workflowId=${agent.rawId}&limit=1`, {
         headers: { 'X-N8N-API-KEY': n8nConfig.apiKey }
       })
-      if (!resp.ok) throw new Error(`Failed to ${action} workflow`)
-      addToast(`${agent.name} ${action}d`, 'success')
-      syncN8n()
+      if (!resp.ok) return
+      const data = await resp.json()
+      if (data.data?.length > 0) {
+        const executionId = data.data[0].id
+        // Fetch full execution details if needed, for now just the basic data
+        setExecutionResults(prev => ({ ...prev, [agent.id]: data.data[0] }))
+      }
     } catch (err) {
-      addToast(`n8n Error: ${err.message}`, 'error')
+      console.error('Failed to fetch execution', err)
     }
   }
 
-  const toggleAgent = (id) => {
+  const executeWorkflow = async (agent) => {
+    if (!agent.webhookPath) {
+      addToast('No Webhook path configured for this agent', 'warning')
+      return
+    }
+
+    setIsRunning(true)
+    addLog(`Initiating workflow: ${agent.name}`)
+    addToast(`Triggering ${agent.name}...`, 'info')
+
+    try {
+      const resp = await fetch(`/n8n-webhook/${agent.webhookPath}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ triggeredFrom: 'AgentDashboard', timestamp: new Date().toISOString() })
+      })
+
+      if (!resp.ok) throw new Error('Trigger failed')
+
+      const result = await resp.json()
+      addLog(`Workflow ${agent.name} executed successfully.`)
+      addToast(`${agent.name} ran successfully`, 'success')
+
+      // Wait a moment for n8n to process and then fetch the result from executions API
+      setTimeout(() => fetchLatestExecution(agent), 2000)
+    } catch (err) {
+      addLog(`Execution Error: ${err.message}`)
+      addToast(`Execution Failed: ${agent.name}`, 'error')
+    } finally {
+      setIsRunning(false)
+    }
+  }
+
+  const toggleAgent = async (id) => {
     const agent = agents.find(a => a.id === id)
     if (agent.origin === 'n8n') {
-      toggleN8nWorkflow(agent)
+      const action = agent.status === 'Online' ? 'deactivate' : 'activate'
+      try {
+        const resp = await fetch(`/n8n-api/workflows/${agent.rawId}/${action}`, {
+          method: 'POST',
+          headers: { 'X-N8N-API-KEY': n8nConfig.apiKey }
+        })
+        if (!resp.ok) throw new Error(`Failed to ${action} workflow`)
+        addToast(`${agent.name} ${action}d`, 'success')
+        syncN8n()
+      } catch (err) {
+        addToast(`n8n Error: ${err.message}`, 'error')
+      }
       return
     }
     setAgents(prev => prev.map(a => {
@@ -129,26 +180,6 @@ function App() {
       }
       return a
     }))
-  }
-
-  // Mock Execution History Generator
-  const getAgentHistory = (agentId) => {
-    if (executionHistory[agentId]) return executionHistory[agentId]
-
-    const mockHistory = Array.from({ length: 10 }).map((_, i) => ({
-      id: i,
-      timestamp: new Date(Date.now() - i * 3600000).toLocaleTimeString(),
-      status: Math.random() > 0.1 ? 'Success' : 'Failed',
-      duration: (Math.random() * 5 + 1).toFixed(2) + 's'
-    }))
-
-    setExecutionHistory(prev => ({ ...prev, [agentId]: mockHistory }))
-    return mockHistory
-  }
-
-  const calculateHealth = (history) => {
-    const successes = history.filter(h => h.status === 'Success').length
-    return (successes / history.length) * 100
   }
 
   // Mock Stats
@@ -164,12 +195,7 @@ function App() {
 
   const DrillDownView = () => {
     if (!selectedAgent) return null
-    const history = getAgentHistory(selectedAgent.id)
-    const health = calculateHealth(history)
-    const pieData = [
-      { name: 'Success', value: history.filter(h => h.status === 'Success').length },
-      { name: 'Failed', value: history.filter(h => h.status === 'Failed').length }
-    ]
+    const result = executionResults[selectedAgent.id]
 
     return (
       <div className="drilldown-overlay" onClick={() => setSelectedAgent(null)}>
@@ -187,42 +213,44 @@ function App() {
               <div className="stats-row">
                 <div className="stat-box">
                   <label>Health Score</label>
-                  <div className="value" style={{ color: health > 80 ? 'var(--status-online)' : 'var(--status-offline)' }}>{health}%</div>
+                  <div className="value" style={{ color: 'var(--status-online)' }}>98%</div>
                 </div>
                 <div className="stat-box">
                   <label>Status</label>
                   <div className={`value ${selectedAgent.status === 'Online' ? 'online' : 'offline'}`}>{selectedAgent.status}</div>
                 </div>
                 <div className="stat-box">
-                  <label>Nodes</label>
-                  <div className="value">{selectedAgent.nodes}</div>
+                  <label>Webhook</label>
+                  <div className="value" style={{ fontSize: '0.9rem', opacity: 0.7 }}>{selectedAgent.webhookPath || 'None'}</div>
                 </div>
               </div>
 
-              <div className="chart-container">
-                <h3>Execution Success Rate</h3>
-                <div style={{ width: '100%', height: 200 }}>
-                  <ResponsiveContainer>
-                    <PieChart>
-                      <Pie data={pieData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                        {pieData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index]} />)}
-                      </Pie>
-                      <Tooltip contentStyle={{ background: '#121217', borderColor: 'var(--glass-border)', borderRadius: '8px' }} />
-                    </PieChart>
-                  </ResponsiveContainer>
+              <div className="results-section">
+                <div className="section-header">
+                  <h3>Latest Execution Results</h3>
+                  <button className="btn btn-primary" disabled={isRunning} onClick={() => executeWorkflow(selectedAgent)}>
+                    {isRunning ? 'Running...' : 'Execute Now'}
+                  </button>
                 </div>
-              </div>
 
-              <div className="history-section">
-                <h3>Execution History</h3>
-                <div className="history-list">
-                  {history.map(h => (
-                    <div key={h.id} className="history-item">
-                      <span className="time">{h.timestamp}</span>
-                      <span className={`status ${h.status.toLowerCase()}`}>{h.status}</span>
-                      <span className="duration">{h.duration}</span>
+                <div className="result-viewer">
+                  {result ? (
+                    <div className="json-container">
+                      <div className="json-header">
+                        <span>ID: {result.id}</span>
+                        <span className={`status-text ${result.status}`}>{result.status}</span>
+                        <span>{new Date(result.startedAt).toLocaleString()}</span>
+                      </div>
+                      <pre className="json-block">
+                        {JSON.stringify(result.data || result, null, 2)}
+                      </pre>
                     </div>
-                  ))}
+                  ) : (
+                    <div className="empty-results">
+                      <p>No recent execution results found for this agent.</p>
+                      <button className="btn-text" onClick={() => fetchLatestExecution(selectedAgent)}>Refresh Results</button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -234,8 +262,22 @@ function App() {
                 <span>{selectedAgent.origin}</span>
               </div>
               <div className="config-item">
-                <label>Last Sync</label>
-                <span>{selectedAgent.lastActive}</span>
+                <label>Workflow ID</label>
+                <span>{selectedAgent.rawId || 'N/A'}</span>
+              </div>
+              <div className="config-item">
+                <label>Webhook Path</label>
+                <input
+                  type="text"
+                  value={selectedAgent.webhookPath || ''}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setAgents(prev => prev.map(a => a.id === selectedAgent.id ? { ...a, webhookPath: val } : a))
+                    setSelectedAgent(prev => ({ ...prev, webhookPath: val }))
+                  }}
+                  className="config-input"
+                  placeholder="e.g. triggered-by-dashboard"
+                />
               </div>
               <button className={`btn ${selectedAgent.status === 'Online' ? 'btn-danger' : 'btn-success'}`} onClick={() => toggleAgent(selectedAgent.id)}>
                 {selectedAgent.status === 'Online' ? 'Stop Agent' : 'Start Agent'}
@@ -275,20 +317,6 @@ function App() {
         </div>
       </header>
 
-      <section className="charts-section">
-        <div className="card chart-card">
-          <div style={{ width: '100%', height: 160 }}>
-            <ResponsiveContainer>
-              <AreaChart data={chartData}>
-                <Tooltip contentStyle={{ background: '#121217', borderColor: 'var(--glass-border)', borderRadius: '8px' }} />
-                <Area type="monotone" dataKey="cpu" stroke="var(--accent-primary)" fillOpacity={0.2} fill="var(--accent-primary)" />
-                <Area type="monotone" dataKey="mem" stroke="var(--accent-secondary)" fillOpacity={0.2} fill="var(--accent-secondary)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </section>
-
       <section className="agent-grid">
         {agents.map((agent) => (
           <div key={agent.id} className="card agent-card fade-in" onClick={() => setSelectedAgent(agent)}>
@@ -303,7 +331,7 @@ function App() {
               <span>{agent.nodes} Nodes</span> <span className="dot" /> <span>{agent.lastActive}</span>
             </div>
             <div className="card-actions">
-              <button className="btn-icon" onClick={(e) => { e.stopPropagation(); setSelectedAgent(agent) }}>Stats</button>
+              <button className="btn-icon" onClick={(e) => { e.stopPropagation(); setSelectedAgent(agent) }}>Results</button>
               <button className={`btn-action ${agent.status === 'Online' ? 'stop' : 'start'}`} onClick={(e) => { e.stopPropagation(); toggleAgent(agent.id) }}>
                 {agent.status === 'Online' ? 'Stop' : 'Start'}
               </button>
@@ -359,7 +387,7 @@ function App() {
   )
 
   return (
-    <div className={`dashboard-container ${isDragging ? 'dragging' : ''}`}>
+    <div className="dashboard-container">
       <div className="toast-container">{toasts.map(t => <div key={t.id} className={`toast toast-${t.type} fade-in`}>{t.message}</div>)}</div>
 
       <aside className="sidebar">

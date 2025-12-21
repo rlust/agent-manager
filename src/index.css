@@ -692,6 +692,77 @@ body {
   border: 1px solid var(--status-offline);
 }
 
+.results-section {
+  margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+.results-section .section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.result-viewer {
+  background: #000;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  min-height: 200px;
+  max-height: 400px;
+  overflow: auto;
+}
+
+.json-container {
+  padding: 1rem;
+}
+
+.json-header {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--glass-border);
+  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.json-header .status-text.success {
+  color: var(--status-online);
+}
+
+.json-header .status-text.failed {
+  color: var(--status-offline);
+}
+
+.json-block {
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  color: #fbbf24;
+  /* Amber for JSON values */
+}
+
+.empty-results {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  opacity: 0.6;
+}
+
+.config-input {
+  width: 100%;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--glass-border);
+  border-radius: 4px;
+  color: white;
+  margin-top: 0.25rem;
+}
+
 .drop-overlay {
   position: fixed;
   inset: 0;
