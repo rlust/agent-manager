@@ -10,17 +10,76 @@ const initialAgents = [
 
 const COLORS = ['#10b981', '#ef4444', '#f59e0b']
 
+const WorkflowVisualizer = ({ workflowData }) => {
+  if (!workflowData || !workflowData.nodes) return <div className="no-data">No node data available</div>
+
+  const nodes = workflowData.nodes
+  const connections = workflowData.connections || {}
+
+  return (
+    <div className="flow-canvas">
+      <svg className="flow-lines">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="0" refY="3.5" orientation="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="var(--accent-primary)" opacity="0.5" />
+          </marker>
+        </defs>
+        {Object.entries(connections).map(([sourceName, outputs]) => {
+          const sourceNode = nodes.find(n => n.name === sourceName)
+          if (!sourceNode) return null
+
+          return Object.values(outputs).map((outputConnections) => {
+            return outputConnections.map((conn, idx) => {
+              const targetNode = nodes.find(n => n.name === conn.node)
+              if (!targetNode) return null
+
+              const x1 = sourceNode.position[0] + 100 // Half node width
+              const y1 = sourceNode.position[1] + 35  // Half node height
+              const x2 = targetNode.position[0]
+              const y2 = targetNode.position[1] + 35
+
+              return (
+                <path
+                  key={`${sourceName}-${targetNode.name}-${idx}`}
+                  d={`M ${x1} ${y1} C ${x1 + 50} ${y1}, ${x2 - 50} ${y2}, ${x2} ${y2}`}
+                  stroke="var(--accent-primary)"
+                  strokeWidth="2"
+                  fill="none"
+                  opacity="0.3"
+                  markerEnd="url(#arrowhead)"
+                />
+              )
+            })
+          })
+        })}
+      </svg>
+      {nodes.map(node => (
+        <div
+          key={node.id}
+          className="flow-node fade-in"
+          style={{ left: node.position[0], top: node.position[1] }}
+        >
+          <div className="node-icon">{node.type.split('.').pop().charAt(0).toUpperCase()}</div>
+          <div className="node-info">
+            <div className="node-name">{node.name}</div>
+            <div className="node-type-label">{node.type.split('.').pop()}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function App() {
-  // Navigation & UI state
   const [activeView, setActiveView] = useState('Dashboard')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [selectedAgent, setSelectedAgent] = useState(null)
+  const [fullWorkflowData, setFullWorkflowData] = useState(null)
   const [toasts, setToasts] = useState([])
   const [searchQuery, setSearchQuery] = useState('')
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef(null)
 
-  // n8n Integration State
   const [n8nStatus, setN8nStatus] = useState('Disconnected')
   const [n8nConfig, setN8nConfig] = useState(() => {
     const saved = localStorage.getItem('n8nConfig')
@@ -30,7 +89,6 @@ function App() {
     }
   })
 
-  // Core Data
   const [agents, setAgents] = useState(() => {
     const saved = localStorage.getItem('agents')
     return saved ? JSON.parse(saved) : initialAgents
@@ -41,13 +99,11 @@ function App() {
     return saved ? JSON.parse(saved) : [{ id: 1, timestamp: new Date().toLocaleTimeString(), message: 'System initialized.' }]
   })
 
-  // Execution & Results State
   const [executionResults, setExecutionResults] = useState({})
   const [isRunning, setIsRunning] = useState(false)
   const [stats, setStats] = useState({ cpu: 12, mem: 45, uptime: '12h 4m' })
   const [chartData, setChartData] = useState([])
 
-  // Persistence
   useEffect(() => localStorage.setItem('agents', JSON.stringify(agents)), [agents])
   useEffect(() => localStorage.setItem('logs', JSON.stringify(logs)), [logs])
   useEffect(() => localStorage.setItem('n8nConfig', JSON.stringify(n8nConfig)), [n8nConfig])
@@ -62,7 +118,6 @@ function App() {
     setLogs(prev => [{ id: Date.now(), timestamp: new Date().toLocaleTimeString(), message }, ...prev.slice(0, 49)])
   }
 
-  // n8n API Logic
   const syncN8n = useCallback(async () => {
     try {
       setN8nStatus('Connecting...')
@@ -86,7 +141,6 @@ function App() {
 
       setAgents(prev => {
         const nonN8n = prev.filter(a => a.origin !== 'n8n')
-        const manual = prev.filter(a => a.origin === 'Manual')
         return [...nonN8n, ...n8nAgents]
       })
 
@@ -103,6 +157,28 @@ function App() {
     return () => clearInterval(int)
   }, [syncN8n])
 
+  const fetchWorkflowDetail = async (agent) => {
+    if (agent.origin !== 'n8n') {
+      setFullWorkflowData(null)
+      return
+    }
+    try {
+      const resp = await fetch(`/n8n-api/workflows/${agent.rawId}`, {
+        headers: { 'X-N8N-API-KEY': n8nConfig.apiKey }
+      })
+      if (!resp.ok) return
+      const data = await resp.json()
+      setFullWorkflowData(data)
+    } catch (err) {
+      console.error('Failed to fetch workflow detail', err)
+    }
+  }
+
+  useEffect(() => {
+    if (selectedAgent) fetchWorkflowDetail(selectedAgent)
+    else setFullWorkflowData(null)
+  }, [selectedAgent])
+
   const fetchLatestExecution = async (agent) => {
     if (agent.origin !== 'n8n') return
     try {
@@ -112,8 +188,6 @@ function App() {
       if (!resp.ok) return
       const data = await resp.json()
       if (data.data?.length > 0) {
-        const executionId = data.data[0].id
-        // Fetch full execution details if needed, for now just the basic data
         setExecutionResults(prev => ({ ...prev, [agent.id]: data.data[0] }))
       }
     } catch (err) {
@@ -123,31 +197,21 @@ function App() {
 
   const executeWorkflow = async (agent) => {
     if (!agent.webhookPath) {
-      addToast('No Webhook path configured for this agent', 'warning')
+      addToast('No Webhook path configured', 'warning')
       return
     }
-
     setIsRunning(true)
-    addLog(`Initiating workflow: ${agent.name}`)
     addToast(`Triggering ${agent.name}...`, 'info')
-
     try {
       const resp = await fetch(`/n8n-webhook/${agent.webhookPath}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ triggeredFrom: 'AgentDashboard', timestamp: new Date().toISOString() })
+        body: JSON.stringify({ triggeredFrom: 'Dashboard' })
       })
-
       if (!resp.ok) throw new Error('Trigger failed')
-
-      const result = await resp.json()
-      addLog(`Workflow ${agent.name} executed successfully.`)
-      addToast(`${agent.name} ran successfully`, 'success')
-
-      // Wait a moment for n8n to process and then fetch the result from executions API
+      addToast(`${agent.name} executed successfully`, 'success')
       setTimeout(() => fetchLatestExecution(agent), 2000)
     } catch (err) {
-      addLog(`Execution Error: ${err.message}`)
       addToast(`Execution Failed: ${agent.name}`, 'error')
     } finally {
       setIsRunning(false)
@@ -163,32 +227,23 @@ function App() {
           method: 'POST',
           headers: { 'X-N8N-API-KEY': n8nConfig.apiKey }
         })
-        if (!resp.ok) throw new Error(`Failed to ${action} workflow`)
+        if (!resp.ok) throw new Error(`Failed to ${action}`)
         addToast(`${agent.name} ${action}d`, 'success')
         syncN8n()
       } catch (err) {
-        addToast(`n8n Error: ${err.message}`, 'error')
+        addToast(`Error: ${err.message}`, 'error')
       }
       return
     }
-    setAgents(prev => prev.map(a => {
-      if (a.id === id) {
-        const newStatus = a.status === 'Online' ? 'Offline' : 'Online'
-        addLog(`Agent "${a.name}" changed to ${newStatus}.`)
-        addToast(`${a.name} is now ${newStatus}`, newStatus === 'Online' ? 'success' : 'warning')
-        return { ...a, status: newStatus, lastActive: 'Now' }
-      }
-      return a
-    }))
+    setAgents(prev => prev.map(a => a.id === id ? { ...a, status: a.status === 'Online' ? 'Offline' : 'Online', lastActive: 'Now' } : a))
   }
 
-  // Mock Stats
   useEffect(() => {
     const interval = setInterval(() => {
-      const newCpu = Math.floor(Math.random() * 15) + 5
+      const newCpu = Math.floor(Math.random() * 10) + 5
       const newMem = Math.floor(Math.random() * 5) + 40
       setStats(prev => ({ ...prev, cpu: newCpu, mem: newMem }))
-      setChartData(prev => [...prev.slice(-9), { time: new Date().toLocaleTimeString().split(' ')[0].split(':')[1] + 's', cpu: newCpu, mem: newMem }])
+      setChartData(prev => [...prev.slice(-9), { time: new Date().toLocaleTimeString().split(' ')[0], cpu: newCpu, mem: newMem }])
     }, 4000)
     return () => clearInterval(interval)
   }, [])
@@ -210,29 +265,28 @@ function App() {
 
           <div className="drilldown-grid">
             <div className="drilldown-main">
-              <div className="stats-row">
-                <div className="stat-box">
-                  <label>Health Score</label>
-                  <div className="value" style={{ color: 'var(--status-online)' }}>98%</div>
-                </div>
-                <div className="stat-box">
-                  <label>Status</label>
-                  <div className={`value ${selectedAgent.status === 'Online' ? 'online' : 'offline'}`}>{selectedAgent.status}</div>
-                </div>
-                <div className="stat-box">
-                  <label>Webhook</label>
-                  <div className="value" style={{ fontSize: '0.9rem', opacity: 0.7 }}>{selectedAgent.webhookPath || 'None'}</div>
-                </div>
+              <div className="view-selector">
+                <button className="vm-btn active">Flow Visualizer</button>
+                <button className="vm-btn" onClick={() => {/* Results View */ }}>Latest Execution</button>
+              </div>
+
+              <div className="visualizer-container">
+                {fullWorkflowData ? (
+                  <WorkflowVisualizer workflowData={fullWorkflowData} />
+                ) : (
+                  <div className="loading-state">
+                    {selectedAgent.origin === 'n8n' ? 'Fetching workflow topology...' : 'No topology available for manual agents.'}
+                  </div>
+                )}
               </div>
 
               <div className="results-section">
                 <div className="section-header">
-                  <h3>Latest Execution Results</h3>
+                  <h3>Execution Results</h3>
                   <button className="btn btn-primary" disabled={isRunning} onClick={() => executeWorkflow(selectedAgent)}>
                     {isRunning ? 'Running...' : 'Execute Now'}
                   </button>
                 </div>
-
                 <div className="result-viewer">
                   {result ? (
                     <div className="json-container">
@@ -241,29 +295,18 @@ function App() {
                         <span className={`status-text ${result.status}`}>{result.status}</span>
                         <span>{new Date(result.startedAt).toLocaleString()}</span>
                       </div>
-                      <pre className="json-block">
-                        {JSON.stringify(result.data || result, null, 2)}
-                      </pre>
+                      <pre className="json-block">{JSON.stringify(result.data || result, null, 2)}</pre>
                     </div>
-                  ) : (
-                    <div className="empty-results">
-                      <p>No recent execution results found for this agent.</p>
-                      <button className="btn-text" onClick={() => fetchLatestExecution(selectedAgent)}>Refresh Results</button>
-                    </div>
-                  )}
+                  ) : <div className="empty-results">No recent executions.</div>}
                 </div>
               </div>
             </div>
 
             <div className="drilldown-sidebar">
-              <h3>Agent Config</h3>
+              <h3>Configuration</h3>
               <div className="config-item">
                 <label>Origin</label>
                 <span>{selectedAgent.origin}</span>
-              </div>
-              <div className="config-item">
-                <label>Workflow ID</label>
-                <span>{selectedAgent.rawId || 'N/A'}</span>
               </div>
               <div className="config-item">
                 <label>Webhook Path</label>
@@ -276,11 +319,10 @@ function App() {
                     setSelectedAgent(prev => ({ ...prev, webhookPath: val }))
                   }}
                   className="config-input"
-                  placeholder="e.g. triggered-by-dashboard"
                 />
               </div>
               <button className={`btn ${selectedAgent.status === 'Online' ? 'btn-danger' : 'btn-success'}`} onClick={() => toggleAgent(selectedAgent.id)}>
-                {selectedAgent.status === 'Online' ? 'Stop Agent' : 'Start Agent'}
+                {selectedAgent.status === 'Online' ? 'Deactivate' : 'Activate'}
               </button>
             </div>
           </div>
@@ -331,7 +373,7 @@ function App() {
               <span>{agent.nodes} Nodes</span> <span className="dot" /> <span>{agent.lastActive}</span>
             </div>
             <div className="card-actions">
-              <button className="btn-icon" onClick={(e) => { e.stopPropagation(); setSelectedAgent(agent) }}>Results</button>
+              <button className="btn-icon" onClick={(e) => { e.stopPropagation(); setSelectedAgent(agent) }}>Stats</button>
               <button className={`btn-action ${agent.status === 'Online' ? 'stop' : 'start'}`} onClick={(e) => { e.stopPropagation(); toggleAgent(agent.id) }}>
                 {agent.status === 'Online' ? 'Stop' : 'Start'}
               </button>
@@ -369,23 +411,6 @@ function App() {
     )
   }
 
-  const SettingsView = () => (
-    <div className="settings-view fade-in">
-      <h1>Instance Configuration</h1>
-      <div className="card settings-container">
-        <div className="form-group">
-          <label>n8n API Key</label>
-          <input type="password" value={n8nConfig.apiKey} onChange={e => setN8nConfig(p => ({ ...p, apiKey: e.target.value }))} />
-        </div>
-        <div className="form-group">
-          <label>n8n Host URL</label>
-          <input type="text" value={n8nConfig.url} onChange={e => setN8nConfig(p => ({ ...p, url: e.target.value }))} />
-        </div>
-        <button className="btn btn-primary" onClick={syncN8n}>Sync n8n Instance</button>
-      </div>
-    </div>
-  )
-
   return (
     <div className="dashboard-container">
       <div className="toast-container">{toasts.map(t => <div key={t.id} className={`toast toast-${t.type} fade-in`}>{t.message}</div>)}</div>
@@ -407,37 +432,19 @@ function App() {
       <main className="main-content">
         {activeView === 'Dashboard' && DashboardView()}
         {(activeView === 'Workflows' || activeView === 'Agents') && ListView(activeView)}
-        {activeView === 'Settings' && SettingsView()}
-
-        {activeView === 'Dashboard' && (
-          <section className="logs-section">
-            <div className="section-header"><h2>Live Console</h2>
-              <div className="console-controls">
-                <input type="text" placeholder="Search..." className="search-input" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-                <button className="btn-text" onClick={() => setLogs([])}>Clear</button>
-              </div>
-            </div>
-            <div className="log-viewer">
-              {logs.filter(l => l.message.toLowerCase().includes(searchQuery.toLowerCase())).map(l => (
-                <div key={l.id} className="log-entry"><span className="log-timestamp">[{l.timestamp}]</span><span>{l.message}</span></div>
-              ))}
-            </div>
-          </section>
-        )}
+        {activeView === 'Settings' && <div className="settings-view fade-in"><h1>Settings</h1><p>Configuration panel.</p></div>}
       </main>
 
       {isModalOpen && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="modal card" onClick={e => e.stopPropagation()}>
-            <h2>Create New Agent</h2>
+            <h2>New Agent</h2>
             <form onSubmit={e => {
               e.preventDefault()
-              const name = e.target.name.value
-              setAgents(prev => [...prev, { id: Date.now(), name, status: 'Offline', lastActive: 'New', type: 'Agent', nodes: 0, origin: 'Manual' }])
-              addToast(`Agent ${name} created`, 'success')
+              setAgents(prev => [...prev, { id: Date.now(), name: e.target.name.value, status: 'Offline', type: 'Agent', nodes: 0, origin: 'Manual' }])
               setIsModalOpen(false)
             }}>
-              <div className="form-group"><label>Agent Name</label><input name="name" type="text" autoFocus /></div>
+              <div className="form-group"><label>Name</label><input name="name" type="text" autoFocus /></div>
               <div className="modal-actions"><button type="submit" className="btn btn-primary">Create</button></div>
             </form>
           </div>
