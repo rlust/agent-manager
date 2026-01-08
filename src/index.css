@@ -288,6 +288,23 @@ body {
   color: white;
 }
 
+.btn-icon.btn-execute {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  border: none;
+  font-size: 1rem;
+  transition: all 0.2s;
+}
+
+.btn-icon.btn-execute:hover:not(:disabled) {
+  transform: scale(1.05);
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.5);
+}
+
+.btn-icon.btn-execute:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn-action.start {
   background: rgba(16, 185, 129, 0.2);
   color: var(--status-online);

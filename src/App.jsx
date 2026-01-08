@@ -84,8 +84,8 @@ function App() {
   const [n8nConfig, setN8nConfig] = useState(() => {
     const saved = localStorage.getItem('n8nConfig')
     return saved ? JSON.parse(saved) : {
-      url: 'http://ubuntullm.tail1f233.ts.net:5678',
-      apiKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOGI1NDI5YS0zNGM2LTQ2MDMtYmI1Yy03ZTZmODRlZTg4YmEiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzY2MzM3OTg3LCJleHAiOjE3NzYyMjU2MDB9.ABncUi6RAQ--MmDKenVuv1oZGGaFUHuW4Gg6c-YqIGk'
+      url: 'http://100.82.85.95:5678',
+      apiKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOGI1NDI5YS0zNGM2LTQ2MDMtYmI1Yy03ZTZmODRlZTg4YmEiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzY1OTU4NTgwLCJleHAiOjE4Mjc2MzcyMDB9.Zu1Q8xQ9YXHyFMIlM1CUHTbo3JAzfB5G1c3ePWlhrWg'
     }
   })
 
@@ -200,13 +200,34 @@ function App() {
       addToast('No Webhook path configured', 'warning')
       return
     }
+
+    // Check if this is a stock workflow
+    const isStockWorkflow = agent.name.toLowerCase().includes('stock') ||
+                           agent.name.toLowerCase().includes('finnhub')
+
+    let payload = { triggeredFrom: 'Dashboard' }
+
+    if (isStockWorkflow) {
+      // Prompt for stock symbols
+      const useCustom = window.confirm('Use custom stock symbols?\n\nClick OK to enter custom symbols\nClick Cancel to use default stocks (AAPL,MSFT,GOOGL,TSLA,NVDA)')
+
+      if (useCustom) {
+        const symbols = window.prompt('Enter stock symbols (comma-separated):\nExample: TSLA,AMD,NFLX,META,AMZN', 'AAPL,MSFT,GOOGL,TSLA,NVDA')
+        if (!symbols) {
+          addToast('Execution cancelled', 'info')
+          return
+        }
+        payload.symbols = symbols.trim()
+      }
+    }
+
     setIsRunning(true)
     addToast(`Triggering ${agent.name}...`, 'info')
     try {
       const resp = await fetch(`/n8n-webhook/${agent.webhookPath}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ triggeredFrom: 'Dashboard' })
+        body: JSON.stringify(payload)
       })
       if (!resp.ok) throw new Error('Trigger failed')
       addToast(`${agent.name} executed successfully`, 'success')
@@ -374,6 +395,11 @@ function App() {
             </div>
             <div className="card-actions">
               <button className="btn-icon" onClick={(e) => { e.stopPropagation(); setSelectedAgent(agent) }}>Stats</button>
+              {agent.webhookPath && (
+                <button className="btn-icon btn-execute" onClick={(e) => { e.stopPropagation(); executeWorkflow(agent) }} disabled={isRunning}>
+                  {isRunning ? '⏳' : '▶️'}
+                </button>
+              )}
               <button className={`btn-action ${agent.status === 'Online' ? 'stop' : 'start'}`} onClick={(e) => { e.stopPropagation(); toggleAgent(agent.id) }}>
                 {agent.status === 'Online' ? 'Stop' : 'Start'}
               </button>
