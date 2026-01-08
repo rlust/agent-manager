@@ -208,16 +208,62 @@ function App() {
     let payload = { triggeredFrom: 'Dashboard' }
 
     if (isStockWorkflow) {
-      // Prompt for stock symbols
-      const useCustom = window.confirm('Use custom stock symbols?\n\nClick OK to enter custom symbols\nClick Cancel to use default stocks (AAPL,MSFT,GOOGL,TSLA,NVDA)')
+      // Stock preset options
+      const stockPresets = {
+        'default': 'AAPL,MSFT,GOOGL,TSLA,NVDA',
+        'tech': 'AAPL,MSFT,GOOGL,TSLA,NVDA',
+        'energy': 'XOM,CVX,COP,SLB,OXY',
+        'finance': 'JPM,BAC,WFC,GS,MS',
+        'retail': 'WMT,TGT,COST,HD,LOW',
+        'mega-cap': 'AAPL,MSFT,GOOGL,AMZN,NVDA',
+        'custom': ''
+      }
 
-      if (useCustom) {
-        const symbols = window.prompt('Enter stock symbols (comma-separated):\nExample: TSLA,AMD,NFLX,META,AMZN', 'AAPL,MSFT,GOOGL,TSLA,NVDA')
-        if (!symbols) {
+      const choice = window.prompt(
+        'Select stock list:\n\n' +
+        '1 - Use workflow defaults\n' +
+        '2 - Tech (AAPL,MSFT,GOOGL,TSLA,NVDA)\n' +
+        '3 - Energy (XOM,CVX,COP,SLB,OXY)\n' +
+        '4 - Finance (JPM,BAC,WFC,GS,MS)\n' +
+        '5 - Retail (WMT,TGT,COST,HD,LOW)\n' +
+        '6 - Mega-cap (AAPL,MSFT,GOOGL,AMZN,NVDA)\n' +
+        '7 - Custom (enter your own)\n\n' +
+        'Enter number (1-7):',
+        '1'
+      )
+
+      if (!choice) {
+        addToast('Execution cancelled', 'info')
+        return
+      }
+
+      const choiceNum = parseInt(choice)
+
+      if (choiceNum === 1) {
+        // Use defaults - don't set symbols
+      } else if (choiceNum === 2) {
+        payload.symbols = stockPresets.tech
+      } else if (choiceNum === 3) {
+        payload.symbols = stockPresets.energy
+      } else if (choiceNum === 4) {
+        payload.symbols = stockPresets.finance
+      } else if (choiceNum === 5) {
+        payload.symbols = stockPresets.retail
+      } else if (choiceNum === 6) {
+        payload.symbols = stockPresets['mega-cap']
+      } else if (choiceNum === 7) {
+        const customSymbols = window.prompt(
+          'Enter stock symbols (comma-separated):\n' +
+          'Example: TSLA,AMD,NFLX,META,AMZN',
+          'AAPL,MSFT,GOOGL'
+        )
+        if (!customSymbols) {
           addToast('Execution cancelled', 'info')
           return
         }
-        payload.symbols = symbols.trim()
+        payload.symbols = customSymbols.trim()
+      } else {
+        addToast('Invalid choice. Using defaults.', 'warning')
       }
     }
 
